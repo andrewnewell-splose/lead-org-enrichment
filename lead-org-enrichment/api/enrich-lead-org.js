@@ -5,7 +5,8 @@
 const PIPEDRIVE_BASE = "https://api.pipedrive.com/v1";
 const PIPEDRIVE_TOKEN = process.env.PIPEDRIVE_API_TOKEN;
 const LUSHA_API_KEY = process.env.LUSHA_API_KEY;
-const WEBHOOK_SECRET = process.env.PIPEDRIVE_WEBHOOK_SECRET;
+const WEBHOOK_USER = process.env.PIPEDRIVE_WEBHOOK_USER;
+const WEBHOOK_PASS = process.env.PIPEDRIVE_WEBHOOK_PASSWORD;
 
 // Custom field key (hash) for the canonical company-domain field on the org object.
 const ORG_DOMAIN_FIELD_KEY = "c9964d2f56ad36d6c6fd1365884df1ad016dc9d2";
@@ -141,13 +142,28 @@ async function attachOrgToLead(leadId, orgId) {
   });
 }
 
+// Validate HTTP Basic auth against the configured username/password.
+// Enforced only when both are set; leave them unset to accept any POST.
+function checkBasicAuth(req) {
+  if (!WEBHOOK_USER && !WEBHOOK_PASS) return true;
+  const header = req.headers["authorization"] || "";
+  const [scheme, encoded] = header.split(" ");
+  if (scheme !== "Basic" || !encoded) return false;
+  let decoded;
+  try {
+    decoded = Buffer.from(encoded, "base64").toString("utf8");
+  } catch {
+    return false;
+  }
+  const idx = decoded.indexOf(":");
+  return decoded.slice(0, idx) === WEBHOOK_USER && decoded.slice(idx + 1) === WEBHOOK_PASS;
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
-  // 1. Verify shared secret (set as a header on the Pipedrive webhook).
-  if (WEBHOOK_SECRET && req.headers["x-webhook-secret"] !== WEBHOOK_SECRET) {
-    return res.status(401).end();
-  }
+  // 1. Verify HTTP Basic auth (set as username/password on the Pipedrive webhook action).
+  if (!checkBasicAuth(req)) return res.status(401).end();
 
   try {
     // 2. Read the custom payload keys defined in the Pipedrive workflow body.
@@ -175,15 +191,18 @@ export default async function handler(req, res) {
     if (!org) org = await findOrgByDomain(domain);
 
     // 8. Genuine miss -> enrich, then create.
+    let action = "matched";
+    let enriched = false;
     if (!org) {
-      const enriched = await enrichCompany(domain);
-      const statedName = body["stated-company"];
-      org = await createOrg({ domain, statedName, enriched });
+      action = "created";
+      const enrichedData = await enrichCompany(domain);
+      enriched = enrichedData != null;
+      org = await createOrg({ domain, statedName: body["stated-company"], enriched: enrichedData });
     }
 
     // 9. Attach.
     await attachOrgToLead(leadId, org.id);
-    return res.status(200).json({ attached: org.id, domain });
+    return res.status(200).json({ attached: org.id, domain, action, enriched });
   } catch (err) {
     console.error(err);
     // 200 avoids Pipedrive retry storms on a logic bug you will fix forward.
