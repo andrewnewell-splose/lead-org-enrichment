@@ -24,8 +24,9 @@ Set these in the Vercel project (Settings, Environment Variables). See `.env.exa
 
 - `PIPEDRIVE_API_TOKEN` Pipedrive API token used for org search, org create, and lead patch.
 - `LUSHA_API_KEY` Lusha API key used for company enrichment by domain.
-- `PIPEDRIVE_WEBHOOK_SECRET` Shared secret. Must match the `x-webhook-secret` header sent by
-  the Pipedrive workflow, or the function returns 401.
+- `PIPEDRIVE_WEBHOOK_USER` and `PIPEDRIVE_WEBHOOK_PASSWORD` HTTP Basic auth credentials. Must match
+  the HTTP Auth username and password set on the Pipedrive webhook action, or the function returns
+  401. Leave both unset to disable the check.
 
 ## Field mapping
 
@@ -49,7 +50,8 @@ HTTP request action:
 - Method: POST
 - URL: the deployed Vercel URL plus the route, for example
   `https://<your-app>.vercel.app/api/enrich-lead-org`
-- Header: `x-webhook-secret` set to the same value as `PIPEDRIVE_WEBHOOK_SECRET`
+- HTTP Auth username and password set to the same values as `PIPEDRIVE_WEBHOOK_USER` and
+  `PIPEDRIVE_WEBHOOK_PASSWORD`
 - Body keys:
   - `lead-id` Lead ID
   - `person-id` Linked person ID (sent but not currently used)
