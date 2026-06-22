@@ -1,0 +1,10 @@
+{
+  "name": "lead-org-enrichment",
+  "version": "1.0.0",
+  "description": "Pipedrive lead webhook that matches or creates an organization by email domain and enriches it via Lusha.",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  }
+}
