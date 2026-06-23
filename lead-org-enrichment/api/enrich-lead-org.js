@@ -142,6 +142,24 @@ async function attachOrgToLead(leadId, orgId) {
   });
 }
 
+// Link the lead's person to the org, but never overwrite an existing person-org link.
+// Self-contained try/catch so a person-link problem never undoes the lead attach.
+async function linkPersonToOrg(personId, orgId) {
+  if (!personId) return false;
+  try {
+    const person = await pd(`/persons/${personId}`);
+    const existing = person?.org_id?.value ?? person?.org_id ?? null;
+    if (existing) return false;
+    await pd(`/persons/${personId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ org_id: orgId })
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Validate HTTP Basic auth against the configured username/password.
 // Enforced only when both are set; leave them unset to accept any POST.
 function checkBasicAuth(req) {
@@ -200,9 +218,10 @@ export default async function handler(req, res) {
       org = await createOrg({ domain, statedName: body["stated-company"], enriched: enrichedData });
     }
 
-    // 9. Attach.
+    // 9. Attach the lead, then link the person to the org (no overwrite).
     await attachOrgToLead(leadId, org.id);
-    return res.status(200).json({ attached: org.id, domain, action, enriched });
+    const personLinked = await linkPersonToOrg(body["person-id"], org.id);
+    return res.status(200).json({ attached: org.id, domain, action, enriched, personLinked });
   } catch (err) {
     console.error(err);
     // 200 avoids Pipedrive retry storms on a logic bug you will fix forward.
