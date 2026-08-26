@@ -15,8 +15,11 @@ and patch the lead. GitHub hosts the source; Vercel runs it.
 3. Resolve the email from the payload, normalise it to a bare domain.
 4. Skip personal and ISP domains (no org created, no Lusha credit spent).
 5. Search organizations on the canonical domain field, exact match, then confirm equality.
+   Where one domain has several orgs, prefer the one carrying a Stripe customer id (the
+   billing record), then the newest.
 6. On a miss, re-check once to narrow the concurrency window, then enrich via Lusha and create.
-7. Patch the lead to attach the org. Return 200.
+7. Patch the lead to attach the org, then link the lead's person to it unless that person
+   already has an org. Return 200.
 
 ## Environment variables
 
@@ -29,6 +32,9 @@ Set these in the Vercel project (Settings, Environment Variables). See `.env.exa
   401. Leave both unset to disable the check.
 
 ## Field mapping
+
+Read, never written: `45c5d808a061abe5f06f73b97f7f4ae8d1ca7e7a` (Stripe customer id,
+maintained by the stripe_metadata sync in splose-revops) breaks duplicate-domain ties.
 
 Written onto the org on create:
 
@@ -54,7 +60,7 @@ HTTP request action:
   `PIPEDRIVE_WEBHOOK_PASSWORD`
 - Body keys:
   - `lead-id` Lead ID
-  - `person-id` Linked person ID (sent but not currently used)
+  - `person-id` Linked person ID (used to link the person to the org)
   - `org-id` Linked organisation ID
   - `stated-company` Stated company name
   - `person-email` Lead contact person email

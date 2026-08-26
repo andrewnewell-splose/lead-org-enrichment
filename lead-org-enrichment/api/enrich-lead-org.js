@@ -11,6 +11,11 @@ const WEBHOOK_PASS = process.env.PIPEDRIVE_WEBHOOK_PASSWORD;
 // Custom field key (hash) for the canonical company-domain field on the org object.
 const ORG_DOMAIN_FIELD_KEY = "c9964d2f56ad36d6c6fd1365884df1ad016dc9d2";
 
+// Stripe customer id on the org, written by the stripe_metadata sync in
+// splose-revops. Read-only here: it identifies the billing record when one
+// domain has more than one org.
+const ORG_STRIPE_FIELD_KEY = "45c5d808a061abe5f06f73b97f7f4ae8d1ca7e7a";
+
 // Org custom field keys written from Lusha enrichment.
 const PRACTITIONER_FIELD_KEY = "408445b2332940cc4d813693dbb4f06939ceface"; // number of practitioners (= employee count for our ICP)
 const COMPANY_SIZE_FIELD_KEY = "f0131c539cef00aa2f82f31751ac38eeb4a2fb1f"; // banded options field
@@ -47,20 +52,47 @@ async function pd(path, options = {}) {
   return data.data;
 }
 
+// add_time as a sortable number. v1 returns "2024-01-22 00:23:53"; tolerate an
+// ISO string too. Unparseable sorts oldest, so a good record always wins.
+function orgAddedAt(org) {
+  const raw = org?.add_time;
+  if (!raw) return 0;
+  const t = Date.parse(String(raw).replace(" ", "T"));
+  return isNaN(t) ? 0 : t;
+}
+
+// Newest first, breaking an add_time tie on the higher (later-created) id.
+function newestFirst(a, b) {
+  return orgAddedAt(b) - orgAddedAt(a) || (b?.id || 0) - (a?.id || 0);
+}
+
 // Exact search of orgs on the canonical domain field, then confirm equality.
+// The search can hit on other fields, so every candidate is re-checked against
+// the domain field before it counts as a match.
 async function findOrgByDomain(domain) {
   const data = await pd(
     `/organizations/search?term=${encodeURIComponent(domain)}` +
     `&fields=custom_fields&exact_match=true`
   );
   const items = data?.items || [];
+
+  const matches = [];
   for (const it of items) {
     const full = await pd(`/organizations/${it.item.id}`);
     if ((full?.[ORG_DOMAIN_FIELD_KEY] || "").toLowerCase() === domain) {
-      return full;
+      matches.push(full);
     }
   }
-  return null;
+  if (matches.length <= 1) return matches[0] || null;
+
+  // Duplicate domains exist. The org carrying a Stripe customer id is the
+  // billing record, so attach the lead there rather than to a stray duplicate;
+  // among equals (all with, or all without) take the newest.
+  const withStripe = matches.filter(
+    o => String(o?.[ORG_STRIPE_FIELD_KEY] ?? "").trim() !== ""
+  );
+  const pool = withStripe.length ? withStripe : matches;
+  return pool.sort(newestFirst)[0];
 }
 
 // Lusha V3 company search-and-enrich (POST /v3/companies/search-and-enrich).
@@ -143,20 +175,24 @@ async function attachOrgToLead(leadId, orgId) {
 }
 
 // Link the lead's person to the org, but never overwrite an existing person-org link.
-// Self-contained try/catch so a person-link problem never undoes the lead attach.
+// Self-contained try/catch so a person-link problem never undoes the lead attach,
+// but the failure is logged and reported rather than swallowed silently.
+// NOTE: v1 updates a person with PUT. PATCH is v2 (and is what /leads takes);
+// sending PATCH here fails every call, which is how this went unnoticed.
 async function linkPersonToOrg(personId, orgId) {
-  if (!personId) return false;
+  if (!personId) return "no-person";
   try {
     const person = await pd(`/persons/${personId}`);
     const existing = person?.org_id?.value ?? person?.org_id ?? null;
-    if (existing) return false;
+    if (existing) return "already-linked";
     await pd(`/persons/${personId}`, {
-      method: "PATCH",
+      method: "PUT",
       body: JSON.stringify({ org_id: orgId })
     });
-    return true;
-  } catch {
-    return false;
+    return "linked";
+  } catch (err) {
+    console.error(`linkPersonToOrg(${personId}, ${orgId}) failed:`, err);
+    return "failed";
   }
 }
 
@@ -220,8 +256,8 @@ export default async function handler(req, res) {
 
     // 9. Attach the lead, then link the person to the org (no overwrite).
     await attachOrgToLead(leadId, org.id);
-    const personLinked = await linkPersonToOrg(body["person-id"], org.id);
-    return res.status(200).json({ attached: org.id, domain, action, enriched, personLinked });
+    const personLink = await linkPersonToOrg(body["person-id"], org.id);
+    return res.status(200).json({ attached: org.id, domain, action, enriched, personLink });
   } catch (err) {
     console.error(err);
     // 200 avoids Pipedrive retry storms on a logic bug you will fix forward.
