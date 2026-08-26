@@ -10,7 +10,7 @@ and patch the lead. GitHub hosts the source; Vercel runs it.
 
 ## Flow
 
-1. Gate the request: POST only, valid shared secret, lead id present.
+1. Gate the request: POST only, valid HTTP Basic credentials, lead id present.
 2. Exit if the lead already has an org attached.
 3. Resolve the email from the payload, normalise it to a bare domain.
 4. Skip personal and ISP domains (no org created, no Lusha credit spent).
@@ -47,6 +47,42 @@ Written onto the org on create:
 - `linkedin` (standard) from Lusha `socialLinks.linkedin`.
 
 Stated company name arrives in the payload as `stated-company`, so no hash is needed for it.
+
+## Response
+
+Always 200, so a logic bug cannot start a Pipedrive retry storm. The body says what happened:
+
+```json
+{ "attached": 102044, "domain": "sacid.org.au", "action": "created",
+  "enriched": true, "personLink": "linked" }
+```
+
+- `action` `matched` (an existing org carried the domain) or `created`.
+- `enriched` whether Lusha returned a company for the domain. Only ever true on `created`.
+- `personLink` `linked`, `already-linked` (the person was already on an org, left alone),
+  `no-person` (the payload carried no `person-id`), or `failed` (logged to Vercel, and the
+  lead attach still stands). A skip or an error returns `{ "skipped": ... }` / `{ "error": ... }`.
+
+## Pipedrive API versions
+
+This function speaks v1. The verbs differ per resource and the mismatch fails silently
+inside a try/catch, so check before adding a call:
+
+| Resource | Update verb |
+|---|---|
+| `/leads/{id}` | `PATCH` |
+| `/persons/{id}` | `PUT` |
+| `/organizations/{id}` | `PUT` |
+
+`PATCH` on a person is the **v2** spelling. It returns an error on v1, which is how the
+person-org link sat broken from 23 Jun to 26 Aug 2026 without anyone noticing.
+
+## The personal-domain blocklist
+
+`FREE_EMAIL_DOMAINS` stops an org being created (and a Lusha credit spent) for a signup on a
+consumer mailbox. It is a hand-maintained list, so it lags: `sky.com`, `hotmail.com.au` and
+`myyahoo.com` have all reached production as org records with the consumer domain in the
+canonical domain field. Add a domain here when one shows up as an org name in Pipedrive.
 
 ## Pipedrive workflow configuration
 
