@@ -25,7 +25,8 @@ const COMPANY_SIZE_FIELD_KEY = "f0131c539cef00aa2f82f31751ac38eeb4a2fb1f"; // ba
 const FREE_EMAIL_DOMAINS = new Set([
   "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "msn.com",
   "yahoo.com", "yahoo.com.au", "ymail.com", "icloud.com", "me.com", "mac.com",
-  "aol.com", "proton.me", "protonmail.com", "gmx.com", "mail.com",
+  "aol.com", "proton.me", "protonmail.com", "gmx.com", "mail.com", "myyahoo.com",
+  "hotmail.com.au", "sky.com",
   "bigpond.com", "bigpond.net.au", "optusnet.com.au", "iinet.net.au", "tpg.com.au",
   "internode.on.net", "ozemail.com.au", "westnet.com.au"
 ]);
